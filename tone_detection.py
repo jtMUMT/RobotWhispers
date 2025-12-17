@@ -8,6 +8,9 @@ samplerate, data = wavfile.read('testdata/sin250.wav')
 # samplerate, data = wavfile.read('testdata/sin500_noise0.wav')
 # samplerate, data = wavfile.read('testdata/sine500_noise6_multi.wav')
 
+print(samplerate)
+print(len(data)/samplerate)
+
 data = data/np.max(data)
 rectified = np.abs(data)
 
@@ -26,24 +29,42 @@ start = 0
 end = int(samplerate / 2)
 simple_posedgecount = 0
 simple_pitch_estimate = 0
+pitch_scaling = 1000
 pitch_env = []
+last_edge = 0
+pulse_width_pitch_est = 0
+pitch_smoothing_factor = 1/441
+pitch_env_smooth = []
 
 for s in range((end-start)):
-    crossings.append(np.sign(data[s]))
-    if (s > 0) and (note_on):
+
+    if (data[s] >= 0):
+        crossings.append(1)
+    else:
+        crossings.append(-1)
+
+    if (s > 1) and (note_on):
         if (new_note):
             new_note = False
             onset_start = s
             pitch_env.append(0)
+            pitch_env_smooth.append(0)
         else:
-            if ((crossings[s-1] + crossings[s]) == 0): #any edge 
+            if ((crossings[s-1] + crossings[s]) == 0): #any edge
                 simple_posedgecount += 1
                 onset_duration = s - onset_start
-                print(simple_posedgecount,onset_duration)
+                # print(simple_posedgecount,onset_duration)
                 simple_pitch_estimate = simple_posedgecount / 2 / onset_duration * samplerate
-            pitch_env.append(simple_pitch_estimate)
+                pulse_width = s - last_edge
+                print(pulse_width)
+                pulse_width_pitch_est = 1/((pulse_width) / samplerate)/2
+                last_edge = s
+                # print(pulse_width_pitch_est)
+            pitch_env.append(pulse_width_pitch_est)
+            pitch_env_smooth.append(pitch_env_smooth[s-1] + (pitch_smoothing_factor*(pulse_width_pitch_est - pitch_env_smooth[s-1])))
     else:
         pitch_env.append(0)
+        pitch_env_smooth.append(0)
 
     if (s > 0):
         sampdiff = rectified[s] - envelope[s-1]
@@ -72,5 +93,6 @@ plt.plot(data[start:end])
 plt.plot(envelope[start:end])
 plt.plot(envelope_binary[start:end])
 # plt.plot(sampdiffs[start:end])
-plt.plot(np.asarray(pitch_env[start:end])/1000)
+plt.plot(np.asarray(pitch_env[start:end])/pitch_scaling)
+plt.plot(np.asarray(pitch_env_smooth[start:end])/pitch_scaling)
 plt.show()
