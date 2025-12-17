@@ -50,14 +50,14 @@ for s in range((end-start)):
             pitch_env.append(0)
             pitch_env_smooth.append(0)
         else:
-            if ((crossings[s-1] + crossings[s]) == 0): #any edge
+            if ((crossings[s] - crossings[s-1]) > 0): #pos edge
                 simple_posedgecount += 1
                 onset_duration = s - onset_start
                 # print(simple_posedgecount,onset_duration)
-                simple_pitch_estimate = simple_posedgecount / 2 / onset_duration * samplerate
+                simple_pitch_estimate = simple_posedgecount / onset_duration * samplerate
                 pulse_width = s - last_edge
                 print(pulse_width)
-                pulse_width_pitch_est = 1/((pulse_width) / samplerate)/2
+                pulse_width_pitch_est = 1/((pulse_width) / samplerate)
                 last_edge = s
                 # print(pulse_width_pitch_est)
             pitch_env.append(pulse_width_pitch_est)
@@ -87,7 +87,7 @@ for s in range((end-start)):
 
 
 plt.figure()
-plt.plot(data[start:end])
+# plt.plot(data[start:end])
 # plt.plot(crossings[start:end])
 # plt.plot(rectified[start:end])
 plt.plot(envelope[start:end])
