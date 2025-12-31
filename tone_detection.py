@@ -4,47 +4,60 @@ import matplotlib.pyplot as plt
 import pyo
 
 QUIT = False
+RUN_ANALYSIS = False
 
 # This will contain all the pitch analysis code
-def RunPitchAnalysis(buffer):
-    global QUIT
-    print('analyzing...')
-    # x = input("record again? (y/n)")
-    # if (x == 'y'):
-    #     print("recording...")
-    # else:
-    #     QUIT = True
-
-
+def RunPitchAnalysis(data):
+    global RUN_ANALYSIS
+    RUN_ANALYSIS = True
+    
 
 # Initialize pyo server and whatnot
 # Use Jack audio protocol, use 1 audio channel (mono)
-audio_server = pyo.Server(nchnls=1)
+audio_server = pyo.Server(sr=44100, buffersize=512, nchnls=2)
 audio_server.boot()
 audio_server.start()
 # Make a very simple tone generator with envelope
 # tone_env = pyo.Adsr()
 # tone_synth = pyo.Sine(freq=500,mul=tone_env)
 # Input buffer for recording live input
-# input_buffer = pyo.NewTable(length=1,chnls=1)
-audio_input=pyo.Input(chnl=1).out()
-# audio_recorder = pyo.TableRec(audio_input,input_buffer)
-# audio_playback = pyo.TableRead(input_buffer)
+input_buffer = pyo.NewTable(length=1,chnls=1)
+audio_input=pyo.Input(chnl=1)
+audio_recorder = pyo.TableRec(audio_input,input_buffer)
+audio_playback_env = pyo.Adsr(sustain=1.0)
+audio_playback = pyo.TableRead(input_buffer,freq=input_buffer.getRate(),loop=1,mul=audio_playback_env).out()
+
 # # Trigger processing function when input recording is finished
-# analysis_trigger = pyo.TrigFunc(audio_recorder['trig'],RunPitchAnalysis,input_buffer)
+analysis_trigger = pyo.TrigFunc(audio_recorder['trig'],RunPitchAnalysis,audio_input)
 # playback_trigger = pyo.TrigFunc(audio_recorder['trig'],audio_playback.play)
 
 # # Run the pyo input/output test
-# x = input("Press Enter when ready to start recording:")
-# audio_recorder.play()
+x = input("Press Enter when ready to start recording:")
+audio_recorder.play()
+# audio_input_env.play()
 
-# while not QUIT:
-#     x = 0 # dummy operation
 
-# print("quitting")
-# audio_server.stop()
+while not QUIT:
+    if RUN_ANALYSIS:
+        print('analyzing...')
+        # audio_playback.play()
+        audio_playback_env.play()
+        plt.figure()
+        plt.plot(input_buffer.getTable())
+        plt.show(block=False)
+        x = input("record again? (y/n)")
+        if (x == 'y'):
+            print("recording...")
+            audio_recorder.play()
+            RUN_ANALYSIS = False
+        else:
+            QUIT = True
+        audio_playback_env.stop()
 
-audio_server.gui(locals())
+print("quitting")
+audio_server.stop()
+
+# audio_server.gui(locals())
     
 
 # test_dir = 'testdata/'
