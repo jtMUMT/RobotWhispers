@@ -18,15 +18,15 @@ def PlayNextNote():
     PLAY_NEXT = True
 
 def StartOutputTone(envelope):
-    print("start tone")
+    # print("start tone")
     envelope.play()
 
 def StopOutputTone(envelope):
-    print("stop tone")
+    # print("stop tone")
     envelope.stop()
 
 def StopRecording(recorders):
-    print("stop recording")
+    # print("stop recording")
     recorders[0].stop()
     recorders[1].stop()
 
@@ -36,17 +36,19 @@ def ConcludePlayback():
 
 # Initialize pyo server and whatnot
 # Use Jack audio protocol, use 1 audio channel (mono)
-audio_server = pyo.Server(sr=44100, buffersize=512, nchnls=2)
+audio_server = pyo.Server(sr=44100, buffersize=1024, nchnls=2)
 audio_server.boot()
 audio_server.start()
 
 # Make a very simple tone generator with envelope
-tone_env = pyo.Adsr(attack=0.1,decay=0,sustain=1.0,release=0.1,mul=0.3)
+tone_env = pyo.Adsr(attack=0.1,decay=0.1,sustain=0.3,dur=0,release=0.5,mul=0.3)
 
 
 # Input buffer for recording live input
 input_buffer = pyo.NewTable(length=3,chnls=1)
 trig_buffer = pyo.NewTable(length=3,chnls=2)
+trig_onset_buffer = np.asarray(trig_buffer.getBuffer(0)) # make the buffer available for modification
+trig_release_buffer = np.asarray(trig_buffer.getBuffer(1)) # make the buffer available for modification
 
 audio_input=pyo.Input(chnl=1)
 audio_recorder = pyo.TableRec(audio_input,input_buffer)
@@ -62,11 +64,11 @@ release_gate = pyo.NextTrig(release_detector,release_gate_enable) # one-shot tri
 onset_gate = pyo.NextTrig(onset_detector,release_gate + onset_gate_enable) # one-shot trigger that sends the next detected onset
 release_gate.setInput2(onset_gate + release_gate_enable)
 
-timeout_counter = pyo.Count(release_gate).stop()
-timeout_value = int(44100*2) # stop recording 2 seconds after the last detected release #FIXME: hardcoded sampling rate and timeout
-timeout_trigger = pyo.Compare(timeout_counter,timeout_value,mode=">=")
-trig_recorder = pyo.TableRec([onset_gate,release_gate],trig_buffer)
-timeout_func = pyo.TrigFunc(timeout_trigger,StopRecording,(audio_recorder,trig_recorder))
+# timeout_counter = pyo.Count(release_gate).stop()
+# timeout_value = int(44100*2) # stop recording 2 seconds after the last detected release #FIXME: hardcoded sampling rate and timeout
+# timeout_trigger = pyo.Compare(timeout_counter,timeout_value,mode=">=")
+# trig_recorder = pyo.TableRec([onset_gate,release_gate],trig_buffer)
+# timeout_func = pyo.TrigFunc(timeout_trigger,StopRecording,(audio_recorder,trig_recorder))
 audio_playback_env = pyo.Adsr(sustain=1.0)
 audio_playback = pyo.TableRead([input_buffer,input_buffer],freq=input_buffer.getRate(),loop=0,mul=audio_playback_env).out()
 
@@ -234,6 +236,8 @@ while not QUIT:
         toneout_freqs = []
         for p in detected_pulses:
             toneout_freqs.append(p['pitch_median']) # add this pitch to the list of pitches to play
+            trig_onset_buffer[p['start']] = 1 # insert detected onset
+            trig_release_buffer[p['end']] = 1 # insert detected release
         print(toneout_freqs)
         toneout_freqswitcher.setChoice(toneout_freqs)
         #     print("Playing:", p)
@@ -289,7 +293,7 @@ while not QUIT:
         if (x == 'y'):
             print("recording...")
             audio_recorder.play()
-            trig_recorder.play()
+            # trig_recorder.play()
             RUN_ANALYSIS = False
         else:
             QUIT = True
