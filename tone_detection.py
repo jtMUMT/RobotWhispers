@@ -6,6 +6,7 @@ import pyo
 QUIT = False
 RUN_ANALYSIS = False
 PLAY_NEXT = False
+PLAYBACK_FINISHED = False
 
 # This will contain all the pitch analysis code
 def RunPitchAnalysis(data):
@@ -16,20 +17,67 @@ def PlayNextNote():
     global PLAY_NEXT
     PLAY_NEXT = True
 
+def StartOutputTone(envelope):
+    print("start tone")
+    envelope.play()
+
+def StopOutputTone(envelope):
+    print("stop tone")
+    envelope.stop()
+
+def StopRecording(recorders):
+    print("stop recording")
+    recorders[0].stop()
+    recorders[1].stop()
+
+def ConcludePlayback():
+    global PLAYBACK_FINISHED
+    PLAYBACK_FINISHED = True
+
 # Initialize pyo server and whatnot
 # Use Jack audio protocol, use 1 audio channel (mono)
 audio_server = pyo.Server(sr=44100, buffersize=512, nchnls=2)
 audio_server.boot()
 audio_server.start()
+
 # Make a very simple tone generator with envelope
-tone_env = pyo.Adsr(attack=0.1,decay=0,sustain=1.0,release=0.4,mul=0.3)
-tone_synth = pyo.Sine(freq=500,mul=tone_env).out()
+tone_env = pyo.Adsr(attack=0.1,decay=0,sustain=1.0,release=0.1,mul=0.3)
+
+
 # Input buffer for recording live input
 input_buffer = pyo.NewTable(length=3,chnls=1)
+trig_buffer = pyo.NewTable(length=3,chnls=2)
+
 audio_input=pyo.Input(chnl=1)
 audio_recorder = pyo.TableRec(audio_input,input_buffer)
+
+input_follower = pyo.Follower(audio_input)
+
+# Set up the audio-rate onset detectors (will stand-in for the offline analysis)
+onset_detector = pyo.Thresh(input_follower,threshold=0.5,dir=0) # positive edge detector
+release_detector = pyo.Thresh(input_follower,threshold=0.05,dir=1) # negative edge detector
+onset_gate_enable = pyo.Trig()
+release_gate_enable = pyo.Trig()
+release_gate = pyo.NextTrig(release_detector,release_gate_enable) # one-shot trigger that sends the next detected release
+onset_gate = pyo.NextTrig(onset_detector,release_gate + onset_gate_enable) # one-shot trigger that sends the next detected onset
+release_gate.setInput2(onset_gate + release_gate_enable)
+
+timeout_counter = pyo.Count(release_gate).stop()
+timeout_value = int(44100*2) # stop recording 2 seconds after the last detected release #FIXME: hardcoded sampling rate and timeout
+timeout_trigger = pyo.Compare(timeout_counter,timeout_value,mode=">=")
+trig_recorder = pyo.TableRec([onset_gate,release_gate],trig_buffer)
+timeout_func = pyo.TrigFunc(timeout_trigger,StopRecording,(audio_recorder,trig_recorder))
 audio_playback_env = pyo.Adsr(sustain=1.0)
-audio_playback = pyo.TableRead([input_buffer,input_buffer],freq=input_buffer.getRate(),loop=1,mul=audio_playback_env).out()
+audio_playback = pyo.TableRead([input_buffer,input_buffer],freq=input_buffer.getRate(),loop=0,mul=audio_playback_env).out()
+
+trigger_playback = pyo.TableRead(trig_buffer,freq=trig_buffer.getRate(),loop=0,mul=1).out()
+trig_finish_indicator = pyo.TrigFunc(trigger_playback['trig'],ConcludePlayback)
+toneout_onset_trigger = pyo.TrigFunc(trigger_playback[0],StartOutputTone,tone_env)
+toneout_freqs = [500] # fill this in during anlaysis
+toneout_freqswitcher = pyo.Iter(trigger_playback[0],toneout_freqs)
+toneout_release_trigger = pyo.TrigFunc(trigger_playback[1],StopOutputTone,tone_env)
+
+tone_synth = pyo.Sine(freq=[toneout_freqswitcher,toneout_freqswitcher],mul=tone_env).out()
 
 # # Trigger processing function when input recording is finished
 analysis_trigger = pyo.TrigFunc(audio_recorder['trig'],RunPitchAnalysis,audio_input)
@@ -37,9 +85,10 @@ analysis_trigger = pyo.TrigFunc(audio_recorder['trig'],RunPitchAnalysis,audio_in
 
 # # Run the pyo input/output test
 x = input("Press Enter when ready to start recording:")
-audio_recorder.play()
-# audio_input_env.play()
 
+# start listening until timeout or buffer full:
+onset_gate_enable.play() # record detected onsets
+audio_recorder.play() # record input audio
 
 while not QUIT:
     if RUN_ANALYSIS:
@@ -182,54 +231,65 @@ while not QUIT:
         print(inter_tone_intervals)
         event_count = 0
 
+        toneout_freqs = []
         for p in detected_pulses:
-            print("Playing:", p)
-            pdur = p['duration']/samplerate
+            toneout_freqs.append(p['pitch_median']) # add this pitch to the list of pitches to play
+        print(toneout_freqs)
+        toneout_freqswitcher.setChoice(toneout_freqs)
+        #     print("Playing:", p)
+        #     pdur = p['duration']/samplerate
 
-            inter_dur = inter_tone_intervals[event_count]
-            event_count += 1
-            # pdur = 1
-            tone_synth.setFreq(float(p['pitch_median']))
-            tone_env.setDur(pdur)
-            tone_env.play()
+        #     inter_dur = inter_tone_intervals[event_count]
+        #     event_count += 1
+        #     # pdur = 1
+        #     tone_synth.setFreq(float(p['pitch_median']))
+        #     tone_env.setDur(pdur)
+        #     tone_env.play()
 
-            #rest between notes if needed
-            if (inter_dur > 0):
-                PLAY_NEXT = False
-                a = pyo.CallAfter(PlayNextNote,inter_dur,None)
-                while not PLAY_NEXT:
-                    x = 0
+        #     #rest between notes if needed
+        #     if (inter_dur > 0):
+        #         PLAY_NEXT = False
+        #         a = pyo.CallAfter(PlayNextNote,inter_dur,None)
+        #         while not PLAY_NEXT:
+        #             x = 0
 
-            #play the note for its indicated duration
-            PLAY_NEXT = False
-            a = pyo.CallAfter(PlayNextNote,pdur,None)
-            while not PLAY_NEXT:
-                x = 0
-            # tone_env.stop()
+        #     #play the note for its indicated duration
+        #     PLAY_NEXT = False
+        #     a = pyo.CallAfter(PlayNextNote,pdur,None)
+        #     while not PLAY_NEXT:
+        #         x = 0
+        #     # tone_env.stop()
 
-        # Wait for a moment before plotting
-        PLAY_NEXT = False
-        a = pyo.CallAfter(PlayNextNote,1,None)
-        while not PLAY_NEXT:
+        # # Wait for a moment before plotting
+        # PLAY_NEXT = False
+        # a = pyo.CallAfter(PlayNextNote,1,None)
+        # while not PLAY_NEXT:
+        #     x = 0
+
+        # plt.figure()
+        # # plt.plot(data[start:end],label='data')
+        # # plt.plot(crossings[start:end],label='cross')
+        # # plt.plot(rectified[start:end])
+        # plt.plot(envelope[start:end],label='env')
+        # plt.plot(envelope_binary[start:end],label='thresh')
+        # # plt.plot(sampdiffs[start:end])
+        # # plt.plot(np.asarray(pitch_env[start:end])/pitch_scaling,label='pitch')
+        # plt.plot(np.asarray(pitch_env_smooth[start:end])/pitch_scaling,label='pitch_smooth')
+        # plt.legend()
+        # plt.show()
+
+        PLAYBACK_FINISHED = False
+        trigger_playback.out()
+        while not PLAYBACK_FINISHED:
             x = 0
-
-        plt.figure()
-        # plt.plot(data[start:end],label='data')
-        # plt.plot(crossings[start:end],label='cross')
-        # plt.plot(rectified[start:end])
-        plt.plot(envelope[start:end],label='env')
-        plt.plot(envelope_binary[start:end],label='thresh')
-        # plt.plot(sampdiffs[start:end])
-        # plt.plot(np.asarray(pitch_env[start:end])/pitch_scaling,label='pitch')
-        plt.plot(np.asarray(pitch_env_smooth[start:end])/pitch_scaling,label='pitch_smooth')
-        plt.legend()
-        plt.show()
-
+        x = input("finished playback")
+            
 
         x = input("record again? (y/n)")
         if (x == 'y'):
             print("recording...")
             audio_recorder.play()
+            trig_recorder.play()
             RUN_ANALYSIS = False
         else:
             QUIT = True
